@@ -50,7 +50,7 @@ dataset/
 
 2. Start training:
 ``
-python src/minecraft_ai_generator/main.py --train --dataset path/to/dataset --epochs 100
+python src/minecraft_ai_generator/main.py --train --dataset dataset --epochs 100
 ``
 
 ## 🏗️ Project Structure
