@@ -27,7 +27,7 @@ def load_trained_model():
 
 def generate_from_prompt(prompt):
     try:
-        print(f"\nGenerating texture from prompt: '{prompt}'")
+        print(f"\nAnalyzing prompt: '{prompt}'")
         
         # Load trained model
         model = load_trained_model()
@@ -39,13 +39,12 @@ def generate_from_prompt(prompt):
         output_dir = Path("output/generated_assets")
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Create filename from prompt
         filename = prompt.lower().replace(' ', '_').replace('-', '_')
         texture_path = output_dir / f"{filename}.png"
         
         # Save texture
         texture.save(texture_path)
-        print(f"Saved texture to: {texture_path}")
+        print(f"Generated texture saved to: {texture_path}")
         
         return texture_path
         
