@@ -10,109 +10,71 @@ from transformers import pipeline
 
 
 class MinecraftTextureGenerator(nn.Module):
-    def __init__(self, latent_dim=100):
-        super(MinecraftTextureGenerator, self).__init__()
+    def __init__(self, latent_dim=100, initial_size=4, device='cpu'):
+        super().__init__()
         self.latent_dim = latent_dim
-        self.texture_size = 16
+        self.initial_size = initial_size
+        self.device = device
+
+        # Calculate initial dense layer size
+        initial_channels = 256
+        dense_size = initial_channels * initial_size * initial_size
         
-        # Neural network layers (matching the saved model)
         self.initial_layer = nn.Sequential(
-            nn.Linear(latent_dim, 256 * 4 * 4),
-            nn.LeakyReLU(0.2),
-            nn.BatchNorm1d(256 * 4 * 4)
+            nn.Linear(latent_dim, dense_size),
+            nn.BatchNorm1d(dense_size),
+            nn.ReLU()
         )
-        
-        self.conv_layers = nn.Sequential(
-            nn.ConvTranspose2d(256, 128, 4, stride=2, padding=1),
-            nn.LeakyReLU(0.2),
-            nn.BatchNorm2d(128),
-            
-            nn.ConvTranspose2d(128, 64, 4, stride=2, padding=1),
-            nn.LeakyReLU(0.2),
-            nn.BatchNorm2d(64),
-            
-            nn.Conv2d(64, 3, 3, stride=1, padding=1),
+
+        # Two upsampling blocks to go from 4x4 to 16x16
+        self.blocks = nn.ModuleList([
+            self._make_block(256, 128),  # 4x4 -> 8x8
+            self._make_block(128, 64)    # 8x8 -> 16x16
+        ])
+
+        self.final_layer = nn.Sequential(
+            nn.Conv2d(64, 3, kernel_size=3, padding=1),
             nn.Tanh()
         )
-        
-        # Extended color dictionary
-        self.color_names = {
-            # Basic colors
-            "red": (255, 0, 0),
-            "dark_red": (139, 0, 0),
-            "green": (0, 255, 0),
-            "dark_green": (0, 100, 0),
-            "blue": (0, 0, 255),
-            "dark_blue": (0, 0, 139),
-            "yellow": (255, 255, 0),
-            "purple": (128, 0, 128),
-            "orange": (255, 165, 0),
-            "brown": (165, 42, 42),
-            "black": (0, 0, 0),
-            "white": (255, 255, 255),
-            "gray": (128, 128, 128),
-            "pink": (255, 192, 203),
-            "cyan": (0, 255, 255),
-            
-            # Minecraft-specific colors
-            "oak": (199, 159, 99),
-            "spruce": (114, 84, 48),
-            "birch": (216, 201, 158),
-            "jungle": (150, 111, 51),
-            "acacia": (168, 90, 50),
-            "dark_oak": (66, 43, 21),
-            
-            # Stone variants
-            "stone": (125, 125, 125),
-            "granite": (153, 114, 99),
-            "diorite": (225, 225, 225),
-            "andesite": (136, 136, 136),
-            
-            # Metals
-            "iron": (216, 216, 216),
-            "gold": (249, 236, 79),
-            "copper": (180, 113, 77),
-            "netherite": (68, 68, 68),
-            
-            # Gems
-            "diamond": (108, 236, 238),
-            "emerald": (68, 218, 123),
-            "amethyst": (153, 92, 219),
-        }
-        
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
-    def forward(self, z):
+
+    def _make_block(self, in_channels, out_channels):
+        return nn.Sequential(
+            nn.ConvTranspose2d(
+                in_channels, out_channels,
+                kernel_size=4, stride=2, padding=1
+            ),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU()
+        )
+
+    def forward(self, batch_size):
+        z = torch.randn(batch_size, self.latent_dim, device=self.device)
         x = self.initial_layer(z)
-        x = x.view(-1, 256, 4, 4)
-        x = self.conv_layers(x)
-        return x
-    
+        x = x.view(batch_size, 256, self.initial_size, self.initial_size)
+        
+        for block in self.blocks:
+            x = block(x)
+            
+        return self.final_layer(x)
+
     def generate_texture(self, prompt):
-        """Generate texture based on prompt"""
         self.eval()
-        prompt = prompt.lower()
-        
-        # Get base colors
-        colors = self._parse_color_from_prompt(prompt)
-        
-        # Create texture based on prompt
-        if "stone" in prompt:
-            img = self._create_stone_texture(colors, "weathered" in prompt)
-        elif "marble" in prompt:
-            img = self._create_marble_texture(colors)
-        elif "wood" in prompt:
-            img = self._create_wood_texture(colors)
-        else:
-            img = self._create_default_texture(colors)
-        
-        # Apply effects
-        if "weathered" in prompt:
-            img = self._apply_weathering(img)
-        if "polished" in prompt or "smooth" in prompt:
-            img = self._apply_polish(img)
-        
-        return self.ensure_minecraft_compatibility(img)
+        with torch.no_grad():
+            # Generate a single texture
+            z = torch.randn(1, self.latent_dim, device=self.device)
+            x = self.initial_layer(z)
+            x = x.view(1, 256, self.initial_size, self.initial_size)
+            
+            for block in self.blocks:
+                x = block(x)
+                
+            x = self.final_layer(x)
+            
+            # Convert to image
+            x = (x + 1) / 2  # Denormalize from [-1, 1] to [0, 1]
+            x = x.squeeze(0).permute(1, 2, 0)
+            x = (x * 255).clamp(0, 255).cpu().numpy().astype(np.uint8)
+            return Image.fromarray(x)
     
     def _create_stone_texture(self, colors, weathered=False):
         """Create stone texture"""
