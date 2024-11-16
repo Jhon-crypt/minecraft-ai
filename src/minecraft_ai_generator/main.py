@@ -1,87 +1,92 @@
+import argparse
 import torch
 from pathlib import Path
+from training import MinecraftDataset, TextureTrainer
 from texture_generator import MinecraftTextureGenerator
-from training import MinecraftDataset, ModelTrainer
-import argparse
-import json
 
 def load_trained_model():
-    # Initialize model
-    model = MinecraftTextureGenerator()
+    """Load the trained model"""
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = MinecraftTextureGenerator().to(device)
     
-    # Load the latest checkpoint
-    checkpoint_dir = Path("checkpoints")
-    checkpoints = list(checkpoint_dir.glob("texture_generator_epoch_*.pth"))
-    if not checkpoints:
-        raise ValueError("No trained model checkpoints found! Please train the model first.")
-    
-    latest_checkpoint = max(checkpoints, key=lambda x: int(x.stem.split('_')[-1]))
-    print(f"Loading checkpoint: {latest_checkpoint}")
-    
-    # Load the state dict with weights_only=True for safety
-    checkpoint = torch.load(latest_checkpoint, weights_only=True, map_location='cpu')
-    model.load_state_dict(checkpoint)
-    model.eval()
+    try:
+        checkpoint_path = 'checkpoints/texture_generator_epoch_200.pth'
+        if not Path(checkpoint_path).exists():
+            print(f"Warning: Checkpoint file not found at {checkpoint_path}")
+            print("Using untrained model...")
+            return model
+            
+        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
+        model.load_state_dict(checkpoint)
+        model.eval()
+        print(f"Model loaded from {checkpoint_path}")
+    except Exception as e:
+        print(f"Error loading model: {e}")
+        print("Using untrained model...")
     
     return model
 
-def generate_from_prompt(prompt):
-    try:
-        print(f"\nAnalyzing prompt: '{prompt}'")
-        
-        # Load trained model
-        model = load_trained_model()
-        
-        # Generate texture
-        texture = model.generate_texture(prompt)
-        
-        # Save the generated texture
-        output_dir = Path("output/generated_assets")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        filename = prompt.lower().replace(' ', '_').replace('-', '_')
-        texture_path = output_dir / f"{filename}.png"
-        
-        # Save texture
-        texture.save(texture_path)
-        print(f"Generated texture saved to: {texture_path}")
-        
-        return texture_path
-        
-    except Exception as e:
-        print(f"Error generating texture: {str(e)}")
-        raise
-
-def train_model(dataset_path, num_epochs=100):
+def train_model(dataset_path: str, num_epochs: int):
+    """Train the model"""
     print("Setting up training...")
     
-    # Initialize generator
-    texture_gen = MinecraftTextureGenerator()
-    
-    # Setup dataset
+    # Load dataset
     dataset = MinecraftDataset(dataset_path)
+    print(f"Found {len(dataset)} texture files")
     print(f"Dataset loaded with {len(dataset)} samples")
     
-    # Setup trainer
-    trainer = ModelTrainer(texture_gen)
+    # Initialize trainer
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    trainer = TextureTrainer(device)
+    print(f"Initialized trainer on device: {device}")
     
-    # Train the model
+    # Start training
+    print(f"Starting training for {num_epochs} epochs...")
     trainer.train(dataset, num_epochs=num_epochs)
-    
-    print("Training completed!")
+
+def generate_from_prompt(prompt: str):
+    """Generate texture from prompt"""
+    print(f"Generating texture from prompt: '{prompt}'")
+    try:
+        model = load_trained_model()
+        
+        # If no checkpoint found, use untrained generation
+        if not Path('checkpoints/texture_generator_epoch_200.pth').exists():
+            texture = model.generate_untrained_texture(prompt)
+        else:
+            # Generate using trained model
+            device = next(model.parameters()).device
+            with torch.no_grad():
+                z = torch.randn(1, model.latent_dim, device=device)
+                generated = model(z)
+                texture = model._tensor_to_image(generated[0])
+                texture = model._apply_color(texture, prompt)
+        
+        # Save the generated texture
+        output_dir = Path('generated')
+        output_dir.mkdir(exist_ok=True)
+        output_path = output_dir / f"texture_{len(list(output_dir.glob('*.png')))}.png"
+        texture.save(output_path)
+        print(f"Saved generated texture to: {output_path}")
+        
+    except Exception as e:
+        print(f"Error generating texture: {e}")
+        import traceback
+        traceback.print_exc()
 
 def main():
-    parser = argparse.ArgumentParser(description='Minecraft Texture Generator')
+    parser = argparse.ArgumentParser(description='Minecraft AI Texture Generator')
     parser.add_argument('--train', action='store_true', help='Train the model')
     parser.add_argument('--generate', action='store_true', help='Generate textures')
-    parser.add_argument('--dataset', type=str, default='dataset', 
-                        help='Path to dataset directory')
-    parser.add_argument('--epochs', type=int, default=100,
-                        help='Number of training epochs')
+    parser.add_argument('--dataset', type=str, help='Path to dataset directory')
+    parser.add_argument('--epochs', type=int, default=100, help='Number of training epochs')
     
     args = parser.parse_args()
     
     if args.train:
+        if not args.dataset:
+            print("Error: --dataset path is required for training")
+            return
         train_model(args.dataset, args.epochs)
     elif args.generate:
         while True:
@@ -90,7 +95,7 @@ def main():
                 break
             generate_from_prompt(prompt)
     else:
-        print("Please specify --train or --generate")
+        print("Please specify either --train or --generate")
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main() 
