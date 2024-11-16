@@ -50,6 +50,11 @@ def generate_from_prompt(prompt: str):
     try:
         model = load_trained_model()
         
+        # Create a valid filename from the prompt
+        # Replace spaces with underscores and remove invalid characters
+        filename = "".join(x for x in prompt if x.isalnum() or x in (' ', '-', '_'))
+        filename = filename.replace(' ', '_').lower()
+        
         # If no checkpoint found, use untrained generation
         if not Path('checkpoints/texture_generator_epoch_200.pth').exists():
             texture = model.generate_untrained_texture(prompt)
@@ -62,10 +67,18 @@ def generate_from_prompt(prompt: str):
                 texture = model._tensor_to_image(generated[0])
                 texture = model._apply_color(texture, prompt)
         
-        # Save the generated texture
+        # Save the generated texture with prompt as filename
         output_dir = Path('generated')
         output_dir.mkdir(exist_ok=True)
-        output_path = output_dir / f"texture_{len(list(output_dir.glob('*.png')))}.png"
+        output_path = output_dir / f"{filename}.png"
+        
+        # If file already exists, add a number
+        if output_path.exists():
+            counter = 1
+            while output_path.exists():
+                output_path = output_dir / f"{filename}_{counter}.png"
+                counter += 1
+                
         texture.save(output_path)
         print(f"Saved generated texture to: {output_path}")
         
